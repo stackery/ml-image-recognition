@@ -1,3 +1,188 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Resources: {}
+Resources:
+  Recognizer:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-Recognizer
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: Recognizer
+      MemorySize: 3008
+      Timeout: 60
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+      PackageType: Image
+      ImageUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RecognizerRepository}:${SourceVersion}
+    Metadata:
+      DockerTag: development
+      Dockerfile: src/Recognizer/Dockerfile
+      DockerContext: src/Recognizer
+    DependsOn:
+      - RecognizerBuildTrigger
+  RecognizerRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      ImageScanningConfiguration:
+        scanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |-
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire old images (keep a few for rollbacks)",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+  RecognizerImageBuilder:
+    Type: AWS::CodeBuild::Project
+    Metadata:
+      StackeryType: docker
+    Properties:
+      Name: !Sub ${AWS::StackName}-Recognizer
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        Type: LINUX_CONTAINER
+        PrivilegedMode: true
+      ServiceRole: !GetAtt RecognizerImageBuilderRole.Arn
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: !Sub
+          - |-
+            version: 0.2
+            phases:
+              install:
+                commands:
+                  - |
+                    _SOURCE_LOCATION="${SourceLocation}"
+                    if [ s3 != "${!_SOURCE_LOCATION%%:*}" ]; then
+                      git clone "${SourceLocation}" repo
+                      cd repo
+                      git checkout "${SourceVersion}"
+                    else
+                      aws s3 cp "${SourceLocation}" repo.tgz
+                      tar --strip-components 1 -xvvzf repo.tgz
+                    fi
+              pre_build:
+                commands:
+                  # https://docs.aws.amazon.com/AmazonECR/latest/userguide/Registries.html#registry_auth
+                  - aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+              build:
+                commands:
+                  - docker build -f "${Dockerfile}" -t "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepositoryName}:${SourceVersion}" "${DockerContext}"
+              post_build:
+                commands:
+                  - if [ $CODEBUILD_BUILD_SUCCEEDING == 0 ]; then exit 1; fi
+                  - docker push "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepositoryName}:${SourceVersion}"
+          - ECRRepositoryName: !Ref RecognizerRepository
+            Dockerfile: src/Recognizer/Dockerfile
+            DockerContext: src/Recognizer
+      Tags:
+        - Key: Stackery Project Type
+          Value: Docker Image Builder
+  RecognizerImageBuilderEvents:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.codebuild
+        detail-type:
+          - CodeBuild Build State Change
+        detail:
+          build-status:
+            - SUCCEEDED
+            - FAILED
+            - FAULT
+            - STOPPPED
+            - TIMED_OUT
+          project-name:
+            - !Ref RecognizerImageBuilder
+      Targets:
+        - Arn: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:stackery-agent-commander
+          Id: StackeryAgentCommander
+  RecognizerImageBuilderEventsPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:stackery-agent-commander
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RecognizerImageBuilderEvents.Arn
+  RecognizerImageBuilderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-Recognizer
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+        - PolicyName: Logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-Recognizer:log-stream:*
+        - PolicyName: DownloadSourceFromStackeryAssetsBucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: arn:aws:s3:::stackery-assetsbucket-*/*
+        - PolicyName: UploadToECRDockerRepository
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !GetAtt RecognizerRepository.Arn
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+  RecognizerBuildTrigger:
+    Type: Custom::StackeryDockerImageBuildTrigger
+    DependsOn: RecognizerImageBuilderEventsPermission
+    Properties:
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:stackery-agent-commander
+      Type: docker
+      ProjectName: !Ref RecognizerImageBuilder
+      SourceVersion: !Ref SourceVersion
+Parameters:
+  StackTagName:
+    Type: String
+    Description: Stack Name (injected by Stackery at deployment time)
+  EnvironmentTagName:
+    Type: String
+    Description: Environment Name (injected by Stackery at deployment time)
+  SourceLocation:
+    Type: String
+    Description: Location of source code for deployment (injected by Stackery at deployment time)
+  SourceVersion:
+    Type: String
+    Description: Source version for deployment (injected by Stackery at deployment time)

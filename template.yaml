@@ -17,7 +17,7 @@ Resources:
       ImageUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RecognizerRepository}:${SourceVersion}
     Metadata:
       DockerTag: development
-      Dockerfile: src/Recognizer/Dockerfile
+      Dockerfile: Dockerfile
       DockerContext: src/Recognizer
     DependsOn:
       - RecognizerBuildTrigger

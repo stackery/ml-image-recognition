@@ -49,8 +49,7 @@ The repository contains a complete example stack that can be imported directly i
 1. Update the following settings:
     * Logical ID: Something descriptive, like *Recognizer*
     * Package Type: Docker Image (so we can fit a large ML model into our source assets!)
-    * DockerFile: You probably want to update this from */src/Function/Dockerfile* to something like */src/Recognizer/Dockerfile*
-    * Docker Build Context: You probably also want to update this from */src/Function* to something like */src/Recognizer*
+    * Docker Build Context: You probably want to update this from */src/Function* to something like */src/Recognizer*
     * Timeout: 120 (it takes a while for TensorFlow to spin up!)
     * Don't forget to click the big, green **Save** button at the bottom of the settings panel!
 1. Save the stack by clicking the **Commit...** button. This is a great opportunity to see what we've added to the [AWS SAM](https://aws.amazon.com/serverless/sam/) template by opening the Template Diff panel. Notice how a bunch of additional resources, like an [AWS ECR](https://aws.amazon.com/ecr/) container image repository and a [CodeBuild](https://aws.amazon.com/codebuild/) project, are scaffolded to support building and running your new Function?

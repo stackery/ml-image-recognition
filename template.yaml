@@ -9,7 +9,7 @@ Resources:
         - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
         - ResourceName: Recognizer
       MemorySize: 3008
-      Timeout: 60
+      Timeout: 120
       Tracing: Active
       Policies:
         - AWSXrayWriteOnlyAccess

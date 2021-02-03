@@ -6,5 +6,6 @@ RUN chmod -R a+r model
 FROM public.ecr.aws/lambda/python
 COPY --from=builder model model
 COPY handler.py requirements.txt ./
+COPY font ./font
 RUN python3 -m pip install -r requirements.txt
 CMD ["handler.lambda_handler"]

@@ -9,15 +9,24 @@ Resources:
         - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
         - ResourceName: Recognizer
       MemorySize: 3008
-      Timeout: 60
+      Timeout: 120
       Tracing: Active
       Policies:
         - AWSXrayWriteOnlyAccess
       PackageType: Image
       ImageUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RecognizerRepository}:${SourceVersion}
+      Events:
+        HttpApiGETdetector:
+          Type: HttpApi
+          Properties:
+            Path: /detector
+            Method: GET
+            ApiId: !Ref HttpApi
+            PayloadFormatVersion: '2.0'
+            TimeoutInMillis: 29000
     Metadata:
       DockerTag: development
-      Dockerfile: src/Recognizer/Dockerfile
+      Dockerfile: Dockerfile
       DockerContext: src/Recognizer
     DependsOn:
       - RecognizerBuildTrigger
@@ -173,6 +182,19 @@ Resources:
       Type: docker
       ProjectName: !Ref RecognizerImageBuilder
       SourceVersion: !Ref SourceVersion
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefinitionBody:
+        openapi: '3.0'
+        info:
+          title: !Sub ${AWS::StackName}-HttpApi
+          version: '1.0'
+        paths:
+          /detector:
+            get:
+              responses: {}
+      FailOnWarnings: true
 Parameters:
   StackTagName:
     Type: String
